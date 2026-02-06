@@ -1,0 +1,9 @@
+texts/**
+videos/**
+tib_dataset/
+videos/**
+audios/**
+qwen/
+llama.cpp/models
+.venv/
+.vscode/
