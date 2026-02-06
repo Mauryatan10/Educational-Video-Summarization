@@ -7,3 +7,4 @@ qwen/
 llama.cpp/models
 .venv/
 .vscode/
+models/**
