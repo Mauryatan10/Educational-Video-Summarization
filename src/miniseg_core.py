@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 
@@ -437,13 +438,15 @@ def collect_predictions(
     model: nn.Module,
     loader: torch.utils.data.DataLoader,
     device: torch.device,
+    desc: str = "eval",
 ) -> Tuple[List[List[float]], List[List[int]]]:
     model.eval()
     all_probs: List[List[float]] = []
     all_labels: List[List[int]] = []
 
     with torch.no_grad():
-        for batch in loader:
+        progress = tqdm(loader, desc=desc, leave=False, dynamic_ncols=True)
+        for batch in progress:
             if batch["input_ids"].numel() == 0:
                 continue
 
@@ -459,6 +462,8 @@ def collect_predictions(
                 valid = sentence_mask[i].bool()
                 all_probs.append(probs[i][valid].detach().cpu().tolist())
                 all_labels.append(labels[i][valid].int().detach().cpu().tolist())
+
+        progress.close()
 
     return all_probs, all_labels
 

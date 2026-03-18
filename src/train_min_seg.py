@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
 from miniseg_core import (
@@ -123,7 +124,8 @@ def _train_one_epoch(
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     pos_weight_tensor = torch.tensor(pos_weight, device=device)
 
-    for batch in train_loader:
+    progress = tqdm(train_loader, desc="train", leave=False, dynamic_ncols=True)
+    for batch in progress:
         if batch["input_ids"].numel() == 0:
             continue
 
@@ -159,6 +161,8 @@ def _train_one_epoch(
 
         running_loss += float(loss.item())
         steps += 1
+        avg_loss = running_loss / max(steps, 1)
+        progress.set_postfix(loss=f"{loss.item():.4f}", avg_loss=f"{avg_loss:.4f}")
 
     return running_loss / max(steps, 1)
 
@@ -169,7 +173,7 @@ def _run_validation(
     device: torch.device,
     threshold_objective: str,
 ) -> Tuple[float, Dict[str, float], List[List[float]], List[List[int]]]:
-    probs_by_doc, labels_by_doc = collect_predictions(model, val_loader, device)
+    probs_by_doc, labels_by_doc = collect_predictions(model, val_loader, device, desc="valid")
     threshold, _ = tune_threshold(probs_by_doc, labels_by_doc, objective=threshold_objective)
     metrics = evaluate_segmentation(probs_by_doc, labels_by_doc, threshold)
     return threshold, metrics, probs_by_doc, labels_by_doc
@@ -284,7 +288,8 @@ def main() -> None:
     best_checkpoint = output_dir / "best.pt"
     last_checkpoint = output_dir / "last.pt"
 
-    for epoch in range(1, args.epochs + 1):
+    epoch_progress = tqdm(range(1, args.epochs + 1), desc="epochs", dynamic_ncols=True)
+    for epoch in epoch_progress:
         train_loss = _train_one_epoch(
             model=model,
             train_loader=train_loader,
@@ -306,6 +311,13 @@ def main() -> None:
             f"Epoch {epoch:02d} | loss={train_loss:.4f} | "
             f"f1={metrics['f1']:.4f} | pk={metrics['pk']:.4f} | wd={metrics['window_diff']:.4f} | "
             f"threshold={threshold:.2f}"
+        )
+        epoch_progress.set_postfix(
+            loss=f"{train_loss:.4f}",
+            f1=f"{metrics['f1']:.4f}",
+            pk=f"{metrics['pk']:.4f}",
+            wd=f"{metrics['window_diff']:.4f}",
+            thr=f"{threshold:.2f}",
         )
 
         checkpoint_payload = {
