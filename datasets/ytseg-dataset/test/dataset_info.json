@@ -1,0 +1,158 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "text",
+  "dataset_name": "ytseg",
+  "dataset_size": 1852687395,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/train-00000-of-00004.parquet": {
+      "num_bytes": 219779138,
+      "checksum": null
+    },
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/train-00001-of-00004.parquet": {
+      "num_bytes": 216597206,
+      "checksum": null
+    },
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/train-00002-of-00004.parquet": {
+      "num_bytes": 222419757,
+      "checksum": null
+    },
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/train-00003-of-00004.parquet": {
+      "num_bytes": 217790106,
+      "checksum": null
+    },
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/validation-00000-of-00001.parquet": {
+      "num_bytes": 78903249,
+      "checksum": null
+    },
+    "hf://datasets/retkowski/ytseg@d0fea2228c6adef53150a484a10680756e426fe6/text/test-00000-of-00001.parquet": {
+      "num_bytes": 79718899,
+      "checksum": null
+    }
+  },
+  "download_size": 1035208355,
+  "features": {
+    "text_ref": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "text_wt": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "text_wl": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "target_binary_ref": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target_binary_wt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target_binary_wl": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target_text_ref": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target_text_ts_ref": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "target_ts": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "audio_path": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "chapter_titles": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "chapter_timestamps": {
+      "feature": {
+        "dtype": "float64",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "channel_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "video_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "speaker_category": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "dominant_speaker_proportion": {
+      "dtype": "float64",
+      "_type": "Value"
+    },
+    "num_speakers": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "duration": {
+      "dtype": "float64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 2887895750,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 1569163312,
+      "num_examples": 16404,
+      "shard_lengths": [
+        6101,
+        6101,
+        4202
+      ],
+      "dataset_name": "ytseg"
+    },
+    "validation": {
+      "name": "validation",
+      "num_bytes": 141373824,
+      "num_examples": 1447,
+      "dataset_name": "ytseg"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 142150259,
+      "num_examples": 1448,
+      "dataset_name": "ytseg"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
