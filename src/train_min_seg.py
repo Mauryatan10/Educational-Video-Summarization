@@ -113,6 +113,7 @@ def _train_one_epoch(
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler,
+    scaler: torch.cuda.amp.GradScaler,
     device: torch.device,
     pos_weight: float,
     use_amp: bool,
@@ -121,7 +122,6 @@ def _train_one_epoch(
     model.train()
     running_loss = 0.0
     steps = 0
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     pos_weight_tensor = torch.tensor(pos_weight, device=device)
 
     progress = tqdm(train_loader, desc="train", leave=False, dynamic_ncols=True)
@@ -216,7 +216,49 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--freeze-sentence-encoder", action="store_true")
     parser.add_argument("--best-metric", type=str, default="f1", choices=["f1", "window_diff", "pk"])
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Path to a checkpoint (`last.pt` or similar) to resume training from.",
+    )
+    parser.add_argument(
+        "--auto-resume",
+        action="store_true",
+        help="Resume from <output-dir>/last.pt if it exists.",
+    )
     return parser.parse_args()
+
+
+def _resume_training_state(
+    resume_path: Path,
+    model: MiniSegModel,
+    optimizer: torch.optim.Optimizer,
+    scheduler,
+    scaler: torch.cuda.amp.GradScaler,
+) -> tuple[int, float]:
+    payload = torch.load(str(resume_path), map_location="cpu")
+    state_dict = payload.get("model_state_dict") or payload.get("state_dict")
+    if state_dict is None:
+        raise ValueError(f"Checkpoint missing model weights: {resume_path}")
+
+    model.load_state_dict(state_dict, strict=True)
+
+    optimizer_state = payload.get("optimizer_state_dict")
+    if optimizer_state is not None:
+        optimizer.load_state_dict(optimizer_state)
+
+    scheduler_state = payload.get("scheduler_state_dict")
+    if scheduler_state is not None:
+        scheduler.load_state_dict(scheduler_state)
+
+    scaler_state = payload.get("scaler_state_dict")
+    if scaler_state is not None:
+        scaler.load_state_dict(scaler_state)
+
+    start_epoch = int(payload.get("epoch", 0)) + 1
+    best_score = float(payload.get("best_score", float("-inf")))
+    return start_epoch, best_score
 
 
 def main() -> None:
@@ -280,21 +322,49 @@ def main() -> None:
         num_warmup_steps=warmup_steps,
         num_training_steps=total_steps,
     )
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     pos_weight = _estimate_pos_weight(train_loader, device)
     print(f"Estimated positive class weight: {pos_weight:.3f}")
 
     best_score = float("-inf")
+    start_epoch = 1
     best_checkpoint = output_dir / "best.pt"
     last_checkpoint = output_dir / "last.pt"
 
-    epoch_progress = tqdm(range(1, args.epochs + 1), desc="epochs", dynamic_ncols=True)
+    resume_path = None
+    if args.resume_from:
+        resume_path = Path(args.resume_from)
+    elif args.auto_resume and last_checkpoint.exists():
+        resume_path = last_checkpoint
+
+    if resume_path is not None:
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        start_epoch, best_score = _resume_training_state(
+            resume_path=resume_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=scaler,
+        )
+        print(f"Resumed from {resume_path} at epoch {start_epoch}")
+
+    if start_epoch > args.epochs:
+        print(
+            f"Resume epoch ({start_epoch}) is greater than --epochs ({args.epochs}). "
+            "Nothing to train."
+        )
+        return
+
+    epoch_progress = tqdm(range(start_epoch, args.epochs + 1), desc="epochs", dynamic_ncols=True)
     for epoch in epoch_progress:
         train_loss = _train_one_epoch(
             model=model,
             train_loader=train_loader,
             optimizer=optimizer,
             scheduler=scheduler,
+            scaler=scaler,
             device=device,
             pos_weight=pos_weight,
             use_amp=use_amp,
@@ -326,8 +396,11 @@ def main() -> None:
             "threshold": threshold,
             "metrics": metrics,
             "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "best_score": best_score,
         }
-        torch.save(checkpoint_payload, last_checkpoint)
 
         score = metrics[args.best_metric]
         if args.best_metric == "window_diff":
@@ -339,6 +412,9 @@ def main() -> None:
             best_score = score
             save_checkpoint(best_checkpoint, model, config, threshold, metrics)
             print(f"Saved new best checkpoint to {best_checkpoint}")
+
+        checkpoint_payload["best_score"] = best_score
+        torch.save(checkpoint_payload, last_checkpoint)
 
     print(f"Training complete. Best checkpoint: {best_checkpoint}")
 
