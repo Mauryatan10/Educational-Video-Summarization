@@ -25,8 +25,10 @@ class MiniSegConfig:
     encoder_name: str = DEFAULT_ENCODER_NAME
     max_sentences: int = DEFAULT_MAX_SENTENCES
     max_tokens: int = DEFAULT_MAX_TOKENS
+    architecture: str = "baseline"
     context_layers: int = 2
     num_heads: int = 4
+    transition_hidden: int = 256
     dropout: float = 0.15
     freeze_sentence_encoder: bool = False
     lr_encoder: float = 2e-5
@@ -264,14 +266,17 @@ class MiniSegModel(nn.Module):
         self,
         encoder_name: str = DEFAULT_ENCODER_NAME,
         max_sentences: int = DEFAULT_MAX_SENTENCES,
+        architecture: str = "baseline",
         context_layers: int = 2,
         num_heads: int = 4,
+        transition_hidden: int = 256,
         dropout: float = 0.15,
         freeze_sentence_encoder: bool = False,
     ) -> None:
         super().__init__()
         self.encoder_name = encoder_name
         self.max_sentences = max_sentences
+        self.architecture = architecture
         self.sentence_encoder = AutoModel.from_pretrained(encoder_name)
         hidden_size = int(self.sentence_encoder.config.hidden_size)
 
@@ -295,6 +300,14 @@ class MiniSegModel(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(max(hidden_size // 2, 32), 1),
+        )
+        self.transition_classifier = nn.Sequential(
+            nn.LayerNorm(hidden_size * 4),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size * 4, transition_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(transition_hidden, 1),
         )
 
         if freeze_sentence_encoder:
@@ -323,8 +336,25 @@ class MiniSegModel(nn.Module):
         sent_repr = sent_repr + self.pos_embedding(pos_ids)
 
         context = self.context_encoder(sent_repr, src_key_padding_mask=~sentence_mask.bool())
-        logits = self.classifier(context).squeeze(-1)
+        if self.architecture == "transition":
+            prev_context = torch.cat([context[:, :1, :], context[:, :-1, :]], dim=1)
+            diff_context = context - prev_context
+            prod_context = context * prev_context
+            transition_features = torch.cat([context, prev_context, diff_context, prod_context], dim=-1)
+            logits = self.transition_classifier(transition_features).squeeze(-1)
+        else:
+            logits = self.classifier(context).squeeze(-1)
         return logits
+
+    def get_head_parameters(self) -> List[nn.Parameter]:
+        params: List[nn.Parameter] = []
+        params.extend(list(self.pos_embedding.parameters()))
+        params.extend(list(self.context_encoder.parameters()))
+        if self.architecture == "transition":
+            params.extend(list(self.transition_classifier.parameters()))
+        else:
+            params.extend(list(self.classifier.parameters()))
+        return params
 
 
 def boundary_f1(
@@ -666,8 +696,10 @@ def load_checkpoint(
     model = MiniSegModel(
         encoder_name=config.encoder_name,
         max_sentences=config.max_sentences,
+        architecture=config.architecture,
         context_layers=config.context_layers,
         num_heads=config.num_heads,
+        transition_hidden=config.transition_hidden,
         dropout=config.dropout,
         freeze_sentence_encoder=config.freeze_sentence_encoder,
     )

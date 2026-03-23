@@ -101,8 +101,10 @@ def _build_model(config: MiniSegConfig) -> MiniSegModel:
     return MiniSegModel(
         encoder_name=config.encoder_name,
         max_sentences=config.max_sentences,
+        architecture=config.architecture,
         context_layers=config.context_layers,
         num_heads=config.num_heads,
+        transition_hidden=config.transition_hidden,
         dropout=config.dropout,
         freeze_sentence_encoder=config.freeze_sentence_encoder,
     )
@@ -204,8 +206,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-sentences", type=int, default=96)
     parser.add_argument("--max-tokens", type=int, default=128)
+    parser.add_argument("--architecture", type=str, default="transition", choices=["baseline", "transition"])
     parser.add_argument("--context-layers", type=int, default=1)
     parser.add_argument("--num-heads", type=int, default=2)
+    parser.add_argument("--transition-hidden", type=int, default=256)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--lr-encoder", type=float, default=2e-5)
     parser.add_argument("--lr-head", type=float, default=1e-4)
@@ -275,8 +279,10 @@ def main() -> None:
         encoder_name=args.encoder_name,
         max_sentences=args.max_sentences,
         max_tokens=args.max_tokens,
+        architecture=args.architecture,
         context_layers=args.context_layers,
         num_heads=args.num_heads,
+        transition_hidden=args.transition_hidden,
         dropout=args.dropout,
         freeze_sentence_encoder=args.freeze_sentence_encoder,
         lr_encoder=args.lr_encoder,
@@ -304,11 +310,7 @@ def main() -> None:
     else:
         encoder_params = list(model.sentence_encoder.parameters())
 
-    head_params = [
-        *model.pos_embedding.parameters(),
-        *model.context_encoder.parameters(),
-        *model.classifier.parameters(),
-    ]
+    head_params = model.get_head_parameters()
     param_groups = []
     if encoder_params:
         param_groups.append({"params": encoder_params, "lr": config.lr_encoder})
