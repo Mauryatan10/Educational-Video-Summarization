@@ -186,6 +186,42 @@ def _collect_error_cases(
     return results
 
 
+def _global_fp_fn_counts(
+    probs_by_doc: Sequence[Sequence[float]],
+    labels_by_doc: Sequence[Sequence[int]],
+    threshold: float,
+) -> Dict[str, int]:
+    total_fp = 0
+    total_fn = 0
+    total_tp = 0
+    total_tn = 0
+
+    for probs, labels in zip(probs_by_doc, labels_by_doc):
+        if not probs or not labels:
+            continue
+        n = min(len(probs), len(labels))
+        preds = [1 if p >= threshold else 0 for p in probs[:n]]
+        gold = list(labels[:n])
+        if preds:
+            preds[0] = 1
+        if gold:
+            gold[0] = 1
+
+        for i in range(1, n):
+            p = preds[i]
+            y = gold[i]
+            if p == 1 and y == 0:
+                total_fp += 1
+            elif p == 0 and y == 1:
+                total_fn += 1
+            elif p == 1 and y == 1:
+                total_tp += 1
+            else:
+                total_tn += 1
+
+    return {"fp": total_fp, "fn": total_fn, "tp": total_tp, "tn": total_tn}
+
+
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description="Analyze MiniSeg boundary errors on validation split.")
@@ -252,6 +288,7 @@ def main() -> None:
 
     probs_by_doc, labels_by_doc = collect_predictions(model, val_loader, device, desc="error-valid")
     metrics = evaluate_segmentation(probs_by_doc, labels_by_doc, threshold)
+    global_counts = _global_fp_fn_counts(probs_by_doc, labels_by_doc, threshold)
     docs = _prepare_docs(validation_split, config.max_sentences)
 
     error_docs = _collect_error_cases(
@@ -272,6 +309,7 @@ def main() -> None:
         "model_config": config.__dict__,
         "threshold_used": threshold,
         "validation_metrics_at_threshold": metrics,
+        "global_counts_at_threshold": global_counts,
         "num_validation_docs_predicted": len(probs_by_doc),
         "num_error_docs_saved": len(error_docs),
         "error_docs": error_docs,
@@ -298,4 +336,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

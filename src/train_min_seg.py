@@ -113,7 +113,7 @@ def _train_one_epoch(
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     device: torch.device,
     pos_weight: float,
     use_amp: bool,
@@ -235,7 +235,7 @@ def _resume_training_state(
     model: MiniSegModel,
     optimizer: torch.optim.Optimizer,
     scheduler,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
 ) -> tuple[int, float]:
     payload = torch.load(str(resume_path), map_location="cpu")
     state_dict = payload.get("model_state_dict") or payload.get("state_dict")
@@ -322,7 +322,7 @@ def main() -> None:
         num_warmup_steps=warmup_steps,
         num_training_steps=total_steps,
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler(enabled=use_amp)
 
     pos_weight = _estimate_pos_weight(train_loader, device)
     print(f"Estimated positive class weight: {pos_weight:.3f}")

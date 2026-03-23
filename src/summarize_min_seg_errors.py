@@ -25,6 +25,10 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _aggregate_error_stats(report: Dict[str, Any]) -> Dict[str, Any]:
+    global_counts = report.get("global_counts_at_threshold") or {}
+    global_fp = global_counts.get("fp")
+    global_fn = global_counts.get("fn")
+
     error_docs = report.get("error_docs", [])
     total_docs = len(error_docs)
     total_fp = sum(int(doc.get("num_fp", 0)) for doc in error_docs)
@@ -42,8 +46,8 @@ def _aggregate_error_stats(report: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "num_error_docs": total_docs,
-        "total_fp": total_fp,
-        "total_fn": total_fn,
+        "total_fp": int(global_fp) if global_fp is not None else total_fp,
+        "total_fn": int(global_fn) if global_fn is not None else total_fn,
         "avg_fp_prob": mean(fp_probs) if fp_probs else None,
         "avg_fn_prob": mean(fn_probs) if fn_probs else None,
     }
@@ -200,4 +204,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
