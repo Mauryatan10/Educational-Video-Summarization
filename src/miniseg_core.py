@@ -29,6 +29,8 @@ class MiniSegConfig:
     context_layers: int = 2
     num_heads: int = 4
     transition_hidden: int = 256
+    pairwise_hidden: int = 256
+    pairwise_layers: int = 1
     dropout: float = 0.15
     freeze_sentence_encoder: bool = False
     lr_encoder: float = 2e-5
@@ -270,6 +272,8 @@ class MiniSegModel(nn.Module):
         context_layers: int = 2,
         num_heads: int = 4,
         transition_hidden: int = 256,
+        pairwise_hidden: int = 256,
+        pairwise_layers: int = 1,
         dropout: float = 0.15,
         freeze_sentence_encoder: bool = False,
     ) -> None:
@@ -309,6 +313,28 @@ class MiniSegModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(transition_hidden, 1),
         )
+        self.pairwise_projection = nn.Linear(hidden_size * 4, pairwise_hidden)
+        self.pairwise_dropout = nn.Dropout(dropout)
+        self.pairwise_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=pairwise_hidden,
+                nhead=max(1, min(num_heads, pairwise_hidden // 64 if pairwise_hidden >= 64 else 1)),
+                dim_feedforward=pairwise_hidden * 4,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            ),
+            num_layers=max(1, pairwise_layers),
+        )
+        self.pairwise_classifier = nn.Sequential(
+            nn.LayerNorm(pairwise_hidden),
+            nn.Dropout(dropout),
+            nn.Linear(pairwise_hidden, max(pairwise_hidden // 2, 32)),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(max(pairwise_hidden // 2, 32), 1),
+        )
 
         if freeze_sentence_encoder:
             for param in self.sentence_encoder.parameters():
@@ -342,6 +368,16 @@ class MiniSegModel(nn.Module):
             prod_context = context * prev_context
             transition_features = torch.cat([context, prev_context, diff_context, prod_context], dim=-1)
             logits = self.transition_classifier(transition_features).squeeze(-1)
+        elif self.architecture == "pairwise":
+            prev_sent = torch.cat([sent_repr[:, :1, :], sent_repr[:, :-1, :]], dim=1)
+            pair_features = torch.cat(
+                [sent_repr, prev_sent, torch.abs(sent_repr - prev_sent), sent_repr * prev_sent], dim=-1
+            )
+            pair_repr = self.pairwise_projection(pair_features)
+            pair_repr = F.gelu(pair_repr)
+            pair_repr = self.pairwise_dropout(pair_repr)
+            pair_repr = self.pairwise_encoder(pair_repr, src_key_padding_mask=~sentence_mask.bool())
+            logits = self.pairwise_classifier(pair_repr).squeeze(-1)
         else:
             logits = self.classifier(context).squeeze(-1)
         return logits
@@ -349,10 +385,15 @@ class MiniSegModel(nn.Module):
     def get_head_parameters(self) -> List[nn.Parameter]:
         params: List[nn.Parameter] = []
         params.extend(list(self.pos_embedding.parameters()))
-        params.extend(list(self.context_encoder.parameters()))
+        if self.architecture == "pairwise":
+            params.extend(list(self.pairwise_projection.parameters()))
+            params.extend(list(self.pairwise_encoder.parameters()))
+            params.extend(list(self.pairwise_classifier.parameters()))
+        else:
+            params.extend(list(self.context_encoder.parameters()))
         if self.architecture == "transition":
             params.extend(list(self.transition_classifier.parameters()))
-        else:
+        elif self.architecture == "baseline":
             params.extend(list(self.classifier.parameters()))
         return params
 
@@ -700,6 +741,8 @@ def load_checkpoint(
         context_layers=config.context_layers,
         num_heads=config.num_heads,
         transition_hidden=config.transition_hidden,
+        pairwise_hidden=config.pairwise_hidden,
+        pairwise_layers=config.pairwise_layers,
         dropout=config.dropout,
         freeze_sentence_encoder=config.freeze_sentence_encoder,
     )

@@ -105,6 +105,8 @@ def _build_model(config: MiniSegConfig) -> MiniSegModel:
         context_layers=config.context_layers,
         num_heads=config.num_heads,
         transition_hidden=config.transition_hidden,
+        pairwise_hidden=config.pairwise_hidden,
+        pairwise_layers=config.pairwise_layers,
         dropout=config.dropout,
         freeze_sentence_encoder=config.freeze_sentence_encoder,
     )
@@ -206,10 +208,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-sentences", type=int, default=96)
     parser.add_argument("--max-tokens", type=int, default=128)
-    parser.add_argument("--architecture", type=str, default="transition", choices=["baseline", "transition"])
+    parser.add_argument("--architecture", type=str, default="pairwise", choices=["baseline", "transition", "pairwise"])
     parser.add_argument("--context-layers", type=int, default=1)
     parser.add_argument("--num-heads", type=int, default=2)
     parser.add_argument("--transition-hidden", type=int, default=256)
+    parser.add_argument("--pairwise-hidden", type=int, default=256)
+    parser.add_argument("--pairwise-layers", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--lr-encoder", type=float, default=2e-5)
     parser.add_argument("--lr-head", type=float, default=1e-4)
@@ -283,6 +287,8 @@ def main() -> None:
         context_layers=args.context_layers,
         num_heads=args.num_heads,
         transition_hidden=args.transition_hidden,
+        pairwise_hidden=args.pairwise_hidden,
+        pairwise_layers=args.pairwise_layers,
         dropout=args.dropout,
         freeze_sentence_encoder=args.freeze_sentence_encoder,
         lr_encoder=args.lr_encoder,
