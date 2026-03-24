@@ -201,14 +201,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--encoder-name",
         type=str,
-        default=DEFAULT_ENCODER_NAME,
+        default="sentence-transformers/all-mpnet-base-v2",
         help="Sentence encoder backbone.",
     )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-sentences", type=int, default=96)
     parser.add_argument("--max-tokens", type=int, default=128)
-    parser.add_argument("--architecture", type=str, default="pairwise", choices=["baseline", "transition", "pairwise"])
+    parser.add_argument("--architecture", type=str, default="transition", choices=["baseline", "transition", "pairwise"])
     parser.add_argument("--context-layers", type=int, default=1)
     parser.add_argument("--num-heads", type=int, default=2)
     parser.add_argument("--transition-hidden", type=int, default=256)
