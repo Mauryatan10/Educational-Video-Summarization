@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -32,6 +33,14 @@ class DebertaSegConfig:
     max_tokens: int = 256
     left_window: int = 3
     right_window: int = 3
+    negative_ratio: float = 3.0
+    max_train_examples: int = 0
+    dataset_seed: int = 42
+    use_lora: bool = True
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.1
+    lora_target_modules: Tuple[str, ...] = ("query_proj", "key_proj", "value_proj")
     lr: float = 2e-5
     weight_decay: float = 0.01
     dropout: float = 0.1
@@ -77,10 +86,14 @@ class WindowBoundaryDataset(Dataset):
         max_sentences: int,
         left_window: int,
         right_window: int,
+        negative_ratio: float = 0.0,
+        max_examples: int = 0,
+        seed: int = 42,
         skip_first: bool = True,
     ) -> None:
         self.items: List[Dict[str, Any]] = []
         self.doc_count = 0
+        rng = random.Random(seed)
 
         for example in split:
             sentences = extract_sentences(example)
@@ -91,6 +104,8 @@ class WindowBoundaryDataset(Dataset):
 
             self.doc_count += 1
             start_idx = 1 if skip_first else 0
+            positives: List[Dict[str, Any]] = []
+            negatives: List[Dict[str, Any]] = []
             for boundary_index in range(start_idx, len(sentences)):
                 left_text, right_text = build_boundary_example(
                     sentences=sentences,
@@ -98,13 +113,25 @@ class WindowBoundaryDataset(Dataset):
                     left_window=left_window,
                     right_window=right_window,
                 )
-                self.items.append(
-                    {
-                        "left_text": left_text,
-                        "right_text": right_text,
-                        "label": int(labels[boundary_index]),
-                    }
-                )
+                item = {
+                    "left_text": left_text,
+                    "right_text": right_text,
+                    "label": int(labels[boundary_index]),
+                }
+                if item["label"] == 1:
+                    positives.append(item)
+                else:
+                    negatives.append(item)
+
+            self.items.extend(positives)
+            if negative_ratio > 0 and positives:
+                max_negatives = int(len(positives) * negative_ratio)
+                if max_negatives > 0 and len(negatives) > max_negatives:
+                    negatives = rng.sample(negatives, max_negatives)
+            self.items.extend(negatives)
+
+        if max_examples > 0 and len(self.items) > max_examples:
+            self.items = rng.sample(self.items, max_examples)
 
     def __len__(self) -> int:
         return len(self.items)
@@ -216,6 +243,32 @@ def collect_doc_probabilities(
     return all_probs, all_labels
 
 
+def build_deberta_model(config: DebertaSegConfig):
+    model = AutoModelForSequenceClassification.from_pretrained(
+        config.model_name,
+        num_labels=1,
+        hidden_dropout_prob=config.dropout,
+        attention_probs_dropout_prob=config.dropout,
+    )
+    if config.use_lora:
+        try:
+            from peft import LoraConfig, TaskType, get_peft_model
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "LoRA training requires `peft`. Install it with `pip install peft` or run with `--no-use-lora`."
+            ) from exc
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_CLS,
+            inference_mode=False,
+            r=config.lora_r,
+            lora_alpha=config.lora_alpha,
+            lora_dropout=config.lora_dropout,
+            target_modules=list(config.lora_target_modules),
+        )
+        model = get_peft_model(model, lora_config)
+    return model
+
+
 def save_deberta_checkpoint(
     path: str | os.PathLike[str],
     model,
@@ -240,12 +293,7 @@ def load_deberta_checkpoint(
     payload = torch.load(str(path), map_location="cpu")
     config = DebertaSegConfig(**payload["config"])
 
-    model = AutoModelForSequenceClassification.from_pretrained(
-        config.model_name,
-        num_labels=1,
-        hidden_dropout_prob=config.dropout,
-        attention_probs_dropout_prob=config.dropout,
-    )
+    model = build_deberta_model(config)
     model.load_state_dict(payload["model_state_dict"], strict=True)
     model.to(device)
     model.eval()

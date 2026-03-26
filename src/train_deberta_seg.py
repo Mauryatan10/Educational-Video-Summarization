@@ -10,12 +10,13 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
 from deberta_seg_core import (
     DebertaSegConfig,
     WindowBoundaryCollator,
     WindowBoundaryDataset,
+    build_deberta_model,
     build_doc_level_windows,
     collect_doc_probabilities,
     import_load_from_disk,
@@ -41,6 +42,9 @@ def build_dataloaders(
         max_sentences=config.max_sentences,
         left_window=config.left_window,
         right_window=config.right_window,
+        negative_ratio=config.negative_ratio,
+        max_examples=config.max_train_examples,
+        seed=config.dataset_seed,
     )
     val_docs = build_doc_level_windows(
         split=dataset["validation"],
@@ -57,6 +61,8 @@ def build_dataloaders(
         num_workers=num_workers,
         collate_fn=collator,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+        prefetch_factor=2 if num_workers > 0 else None,
     )
     return train_loader, val_docs
 
@@ -83,6 +89,7 @@ def train_one_epoch(
     pos_weight: float,
     use_amp: bool,
     grad_clip: float,
+    grad_accum_steps: int,
 ) -> float:
     model.train()
     running_loss = 0.0
@@ -90,30 +97,43 @@ def train_one_epoch(
     pos_weight_tensor = torch.tensor(pos_weight, device=device)
 
     progress = tqdm(train_loader, desc="train", leave=False, dynamic_ncols=True)
+    optimizer.zero_grad(set_to_none=True)
     for batch in progress:
         if batch["input_ids"].numel() == 0:
             continue
 
         batch = {key: value.to(device) for key, value in batch.items()}
         labels = batch.pop("labels")
-        optimizer.zero_grad(set_to_none=True)
 
         autocast_ctx = torch.autocast(device_type="cuda") if use_amp else nullcontext()
         with autocast_ctx:
             logits = model(**batch).logits.squeeze(-1)
             loss = F.binary_cross_entropy_with_logits(logits, labels, pos_weight=pos_weight_tensor)
+            scaled_loss = loss / max(grad_accum_steps, 1)
 
-        scaler.scale(loss).backward()
+        scaler.scale(scaled_loss).backward()
+        should_step = (steps + 1) % max(grad_accum_steps, 1) == 0
+        if should_step:
+            if grad_clip > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        running_loss += float(loss.item())
+        steps += 1
+        progress.set_postfix(loss=f"{loss.item():.4f}", avg_loss=f"{running_loss / max(steps, 1):.4f}")
+
+    if steps > 0 and steps % max(grad_accum_steps, 1) != 0:
         if grad_clip > 0:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         scaler.step(optimizer)
         scaler.update()
         scheduler.step()
-
-        running_loss += float(loss.item())
-        steps += 1
-        progress.set_postfix(loss=f"{loss.item():.4f}", avg_loss=f"{running_loss / max(steps, 1):.4f}")
+        optimizer.zero_grad(set_to_none=True)
 
     progress.close()
     return running_loss / max(steps, 1)
@@ -155,12 +175,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--left-window", type=int, default=3)
     parser.add_argument("--right-window", type=int, default=3)
+    parser.add_argument("--negative-ratio", type=float, default=3.0)
+    parser.add_argument("--max-train-examples", type=int, default=0)
+    parser.add_argument("--use-lora", action="store_true", default=True)
+    parser.add_argument("--no-use-lora", dest="use_lora", action="store_false")
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--warmup-ratio", type=float, default=0.08)
     parser.add_argument("--grad-clip", type=float, default=1.0)
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -171,6 +199,10 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = torch.cuda.is_available()
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("high")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -180,6 +212,13 @@ def main() -> None:
         max_tokens=args.max_tokens,
         left_window=args.left_window,
         right_window=args.right_window,
+        negative_ratio=args.negative_ratio,
+        max_train_examples=args.max_train_examples,
+        dataset_seed=args.seed,
+        use_lora=args.use_lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
         lr=args.lr,
         weight_decay=args.weight_decay,
         dropout=args.dropout,
@@ -193,16 +232,19 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
+    print(
+        f"Training windows: {len(train_loader.dataset):,} from {train_loader.dataset.doc_count:,} docs | "
+        f"validation docs: {len(val_docs):,}"
+    )
 
-    model = AutoModelForSequenceClassification.from_pretrained(
-        config.model_name,
-        num_labels=1,
-        hidden_dropout_prob=config.dropout,
-        attention_probs_dropout_prob=config.dropout,
-    ).to(device)
+    model = build_deberta_model(config).to(device)
+    if hasattr(model, "print_trainable_parameters"):
+        model.print_trainable_parameters()
 
-    optimizer = AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
-    total_steps = max(1, len(train_loader) * args.epochs)
+    trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    optimizer = AdamW(trainable_parameters, lr=config.lr, weight_decay=config.weight_decay)
+    updates_per_epoch = max(1, (len(train_loader) + max(args.grad_accum_steps, 1) - 1) // max(args.grad_accum_steps, 1))
+    total_steps = max(1, updates_per_epoch * args.epochs)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(total_steps * args.warmup_ratio),
@@ -228,6 +270,7 @@ def main() -> None:
             pos_weight=pos_weight,
             use_amp=use_amp,
             grad_clip=args.grad_clip,
+            grad_accum_steps=args.grad_accum_steps,
         )
 
         metrics = run_validation(
@@ -274,4 +317,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
