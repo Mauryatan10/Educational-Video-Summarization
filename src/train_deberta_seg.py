@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
@@ -162,11 +162,19 @@ def run_validation(
     return metrics
 
 
+def load_resume_payload(resume_path: Path, device: torch.device) -> Dict:
+    if not resume_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+    return torch.load(str(resume_path), map_location=device)
+
+
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description="Train DeBERTa windowed boundary classifier.")
     parser.add_argument("--dataset-dir", type=str, default=str(repo_root / "datasets" / "ytseg-dataset"))
     parser.add_argument("--output-dir", type=str, default=str(repo_root / "models" / "deberta-seg"))
+    parser.add_argument("--resume-from", type=str, default=None)
+    parser.add_argument("--auto-resume", action="store_true")
     parser.add_argument("--model-name", type=str, default="microsoft/deberta-v3-base")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -205,24 +213,40 @@ def main() -> None:
         torch.set_float32_matmul_precision("high")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    last_path = output_dir / "last.pt"
+    best_path = output_dir / "best.pt"
 
-    config = DebertaSegConfig(
-        model_name=args.model_name,
-        max_sentences=args.max_sentences,
-        max_tokens=args.max_tokens,
-        left_window=args.left_window,
-        right_window=args.right_window,
-        negative_ratio=args.negative_ratio,
-        max_train_examples=args.max_train_examples,
-        dataset_seed=args.seed,
-        use_lora=args.use_lora,
-        lora_r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        dropout=args.dropout,
-    )
+    resume_path: Optional[Path] = None
+    if args.resume_from:
+        resume_path = Path(args.resume_from)
+    elif args.auto_resume and last_path.exists():
+        resume_path = last_path
+
+    resume_payload: Optional[Dict] = None
+    if resume_path is not None:
+        resume_payload = load_resume_payload(resume_path, device)
+        print(f"Resuming training from: {resume_path}")
+
+    if resume_payload is not None:
+        config = DebertaSegConfig(**resume_payload["config"])
+    else:
+        config = DebertaSegConfig(
+            model_name=args.model_name,
+            max_sentences=args.max_sentences,
+            max_tokens=args.max_tokens,
+            left_window=args.left_window,
+            right_window=args.right_window,
+            negative_ratio=args.negative_ratio,
+            max_train_examples=args.max_train_examples,
+            dataset_seed=args.seed,
+            use_lora=args.use_lora,
+            lora_r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            dropout=args.dropout,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     train_loader, val_docs = build_dataloaders(
@@ -238,6 +262,8 @@ def main() -> None:
     )
 
     model = build_deberta_model(config).to(device)
+    if resume_payload is not None:
+        model.load_state_dict(resume_payload["model_state_dict"], strict=True)
     if hasattr(model, "print_trainable_parameters"):
         model.print_trainable_parameters()
 
@@ -251,14 +277,27 @@ def main() -> None:
         num_training_steps=total_steps,
     )
     scaler = torch.amp.GradScaler(enabled=use_amp)
+    start_epoch = 1
+    best_f1 = float("-inf")
+    if resume_payload is not None:
+        optimizer.load_state_dict(resume_payload["optimizer_state_dict"])
+        scheduler.load_state_dict(resume_payload["scheduler_state_dict"])
+        scaler_state = resume_payload.get("scaler_state_dict")
+        if scaler_state:
+            scaler.load_state_dict(scaler_state)
+        start_epoch = int(resume_payload.get("epoch", 0)) + 1
+        best_f1 = float(resume_payload.get("best_f1", resume_payload.get("metrics", {}).get("f1", float("-inf"))))
     pos_weight = estimate_pos_weight(train_loader)
     print(f"Estimated positive class weight: {pos_weight:.3f}")
 
-    best_f1 = float("-inf")
-    best_path = output_dir / "best.pt"
-    last_path = output_dir / "last.pt"
+    if start_epoch > args.epochs:
+        print(
+            f"Checkpoint is already at epoch {start_epoch - 1}. "
+            f"Increase --epochs above {start_epoch - 1} to continue training."
+        )
+        return
 
-    epoch_progress = tqdm(range(1, args.epochs + 1), desc="epochs", dynamic_ncols=True)
+    epoch_progress = tqdm(range(start_epoch, args.epochs + 1), desc="epochs", dynamic_ncols=True)
     for epoch in epoch_progress:
         train_loss = train_one_epoch(
             model=model,
@@ -300,17 +339,20 @@ def main() -> None:
             "config": config.__dict__,
             "threshold": metrics["threshold"],
             "metrics": metrics,
+            "best_f1": best_f1,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "scaler_state_dict": scaler.state_dict(),
         }
-        torch.save(payload, last_path)
 
         if metrics["f1"] > best_f1:
             best_f1 = metrics["f1"]
             save_deberta_checkpoint(best_path, model, config, metrics["threshold"], metrics)
             print(f"Saved new best checkpoint to {best_path}")
+
+        payload["best_f1"] = best_f1
+        torch.save(payload, last_path)
 
     print(f"Training complete. Best checkpoint: {best_path}")
 
