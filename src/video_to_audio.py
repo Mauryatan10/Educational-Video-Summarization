@@ -17,10 +17,10 @@ def extract_audio_ffmpeg(video_name, video_dir="./videos", audio_dir="./audios")
     try:
         subprocess.run([
             "ffmpeg", "-i", video_path, "-q:a", "0", "-map", "a", audio_path, "-y"
-        ], check=True)
+        ], check=True, capture_output=True)
         print(f"Audio extracted and saved to: {audio_path}")
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg failed: {e}")
+        raise RuntimeError(f"FFmpeg audio extraction failed: {e.stderr.decode(errors='ignore') if e.stderr else e}")
 
 # Example usage:
 # If the video file is ./video/my_video.mp4

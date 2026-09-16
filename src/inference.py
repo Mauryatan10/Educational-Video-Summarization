@@ -286,7 +286,7 @@ class CollatorWithUtteranceBoundaries:
 def load_model(
     base_model_name="allenai/led-base-16384",
     adapter="hier",
-    peft_dir=r"B:\stacks\Machine_learning_projects\Video_Summarization_Translation\models\led-tib-lora\checkpoint-3500",
+    peft_dir=r"B:\stacks\Machine_learning_projects\Video_Summarization_Translation\models\led-tib-lora\checkpoint-9000",
     hier_dir=r"B:\stacks\Machine_learning_projects\Video_Summarization_Translation\models\led-tib-hier\led_hier_adapter_run",
     device=None,
 ):

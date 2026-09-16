@@ -187,6 +187,13 @@ def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description="Train the MiniSeg topic segmentation model.")
     parser.add_argument(
+        "--profile",
+        type=str,
+        default="default",
+        choices=["default", "a100_32gb", "a100_32gb_large"],
+        help="Optional training preset that overrides several hyperparameters.",
+    )
+    parser.add_argument(
         "--dataset-dir",
         type=str,
         default=str(repo_root / "datasets" / "ytseg-dataset"),
@@ -223,7 +230,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--freeze-sentence-encoder", action="store_true")
-    parser.add_argument("--best-metric", type=str, default="f1", choices=["f1", "window_diff", "pk"])
+    parser.add_argument(
+        "--best-metric",
+        type=str,
+        default="f1",
+        choices=["f1", "relaxed_f1", "window_diff", "pk"],
+    )
     parser.add_argument(
         "--resume-from",
         type=str,
@@ -272,6 +284,37 @@ def _resume_training_state(
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
+
+    if args.profile == "a100_32gb":
+        args.encoder_name = "sentence-transformers/all-mpnet-base-v2"
+        args.batch_size = max(args.batch_size, 8)
+        args.max_sentences = max(args.max_sentences, 256)
+        args.max_tokens = max(args.max_tokens, 128)
+        args.architecture = "transition"
+        args.context_layers = max(args.context_layers, 4)
+        args.num_heads = max(args.num_heads, 8)
+        args.transition_hidden = max(args.transition_hidden, 512)
+        args.dropout = min(args.dropout, 0.15)
+        args.lr_encoder = min(args.lr_encoder, 1e-5)
+        args.lr_head = min(args.lr_head, 5e-5)
+        args.warmup_ratio = max(args.warmup_ratio, 0.1)
+        args.grad_clip = min(args.grad_clip, 1.0)
+        args.num_workers = max(args.num_workers, 2)
+    elif args.profile == "a100_32gb_large":
+        args.encoder_name = "sentence-transformers/all-mpnet-base-v2"
+        args.batch_size = max(args.batch_size, 12)
+        args.max_sentences = max(args.max_sentences, 384)
+        args.max_tokens = max(args.max_tokens, 160)
+        args.architecture = "transition"
+        args.context_layers = max(args.context_layers, 6)
+        args.num_heads = max(args.num_heads, 8)
+        args.transition_hidden = max(args.transition_hidden, 768)
+        args.dropout = min(args.dropout, 0.12)
+        args.lr_encoder = min(args.lr_encoder, 8e-6)
+        args.lr_head = min(args.lr_head, 4e-5)
+        args.warmup_ratio = max(args.warmup_ratio, 0.12)
+        args.grad_clip = min(args.grad_clip, 1.0)
+        args.num_workers = max(args.num_workers, 4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = torch.cuda.is_available()
@@ -387,12 +430,14 @@ def main() -> None:
         )
         print(
             f"Epoch {epoch:02d} | loss={train_loss:.4f} | "
-            f"f1={metrics['f1']:.4f} | pk={metrics['pk']:.4f} | wd={metrics['window_diff']:.4f} | "
+            f"f1={metrics['f1']:.4f} | relaxed_f1={metrics.get('relaxed_f1', 0.0):.4f} | "
+            f"pk={metrics['pk']:.4f} | wd={metrics['window_diff']:.4f} | "
             f"threshold={threshold:.2f}"
         )
         epoch_progress.set_postfix(
             loss=f"{train_loss:.4f}",
             f1=f"{metrics['f1']:.4f}",
+            rf1=f"{metrics.get('relaxed_f1', 0.0):.4f}",
             pk=f"{metrics['pk']:.4f}",
             wd=f"{metrics['window_diff']:.4f}",
             thr=f"{threshold:.2f}",

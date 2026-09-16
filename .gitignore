@@ -8,3 +8,8 @@ llama.cpp/models
 .venv/
 .vscode/
 models
+.kilo
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

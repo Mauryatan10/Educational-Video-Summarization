@@ -159,13 +159,14 @@ def main() -> None:
         checkpoint=args.checkpoint,
     )
     threshold = args.threshold if args.threshold is not None else saved_threshold
+    max_sentences = min(args.max_sentences, config.max_sentences)
 
     result = segment_document(
         text=text,
         model=model,
         tokenizer=tokenizer,
         threshold=threshold,
-        max_sentences=args.max_sentences,
+        max_sentences=max_sentences,
         max_tokens=args.max_tokens,
         min_chunk_sentences=args.min_chunk_sentences,
     )
@@ -189,4 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

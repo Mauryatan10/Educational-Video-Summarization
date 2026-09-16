@@ -446,6 +446,48 @@ def _boundary_counts(
     return tp, fp, fn
 
 
+def relaxed_boundary_f1(
+    preds: Sequence[int],
+    labels: Sequence[int],
+    window: int = 2,
+    ignore_first: bool = True,
+) -> Dict[str, float]:
+    if len(preds) != len(labels):
+        raise ValueError("preds and labels must have the same length")
+
+    start = 1 if ignore_first and len(labels) > 0 else 0
+    pred_indices = [i for i in range(start, len(preds)) if preds[i] == 1]
+    true_indices = [i for i in range(start, len(labels)) if labels[i] == 1]
+
+    matched_preds = set()
+    matched_trues = set()
+    for t_idx in true_indices:
+        for p_idx in pred_indices:
+            if p_idx in matched_preds:
+                continue
+            if abs(p_idx - t_idx) <= window:
+                matched_trues.add(t_idx)
+                matched_preds.add(p_idx)
+                break
+
+    tp = len(matched_trues)
+    fp = max(0, len(pred_indices) - len(matched_preds))
+    fn = max(0, len(true_indices) - len(matched_trues))
+
+    precision = tp / (tp + fp + 1e-9)
+    recall = tp / (tp + fn + 1e-9)
+    f1 = (2 * precision * recall) / (precision + recall + 1e-9)
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": float(tp),
+        "fp": float(fp),
+        "fn": float(fn),
+        "window": float(window),
+    }
+
+
 def _boundary_to_segments(boundaries: Sequence[int]) -> List[int]:
     segment_ids: List[int] = []
     current = 0
@@ -549,8 +591,15 @@ def tune_threshold(
         thresholds = [x / 100.0 for x in range(10, 91)]
 
     best_threshold = 0.5
-    best_metrics = {"f1": -1.0, "precision": 0.0, "recall": 0.0, "pk": float("inf"), "window_diff": float("inf")}
-    maximize = objective in {"f1", "precision", "recall"}
+    best_metrics = {
+        "f1": -1.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "pk": float("inf"),
+        "window_diff": float("inf"),
+        "relaxed_f1": -1.0,
+    }
+    maximize = objective in {"f1", "precision", "recall", "relaxed_f1"}
 
     for threshold in thresholds:
         tp = fp = fn = 0
@@ -575,12 +624,25 @@ def tune_threshold(
         precision = tp / (tp + fp + 1e-9)
         recall = tp / (tp + fn + 1e-9)
         f1 = (2 * precision * recall) / (precision + recall + 1e-9)
+        relaxed_scores: List[float] = []
+        for probs, labels in zip(probs_by_doc, labels_by_doc):
+            if not probs:
+                continue
+            preds = [1 if p >= threshold else 0 for p in probs]
+            if preds:
+                preds[0] = 1
+            if labels:
+                labels = list(labels)
+                labels[0] = 1
+            relaxed_scores.append(relaxed_boundary_f1(preds, labels, window=2)["f1"])
+        relaxed_f1 = sum(relaxed_scores) / max(len(relaxed_scores), 1)
         metrics = {
             "precision": precision,
             "recall": recall,
             "f1": f1,
             "pk": sum(doc_pk) / max(len(doc_pk), 1),
             "window_diff": sum(doc_wd) / max(len(doc_wd), 1),
+            "relaxed_f1": relaxed_f1,
         }
         score = metrics.get(objective, f1)
         best_score = best_metrics.get(objective, best_metrics["f1"])
@@ -598,6 +660,7 @@ def evaluate_segmentation(
     threshold: float,
 ) -> Dict[str, float]:
     doc_f1: List[float] = []
+    doc_relaxed_f1: List[float] = []
     doc_pk: List[float] = []
     doc_wd: List[float] = []
     tp = fp = fn = 0
@@ -618,6 +681,7 @@ def evaluate_segmentation(
         fn += c_fn
 
         doc_f1.append(boundary_f1(preds, labels)["f1"])
+        doc_relaxed_f1.append(relaxed_boundary_f1(preds, labels, window=2)["f1"])
         doc_pk.append(pk_score(labels, preds))
         doc_wd.append(window_diff(labels, preds))
 
@@ -636,6 +700,7 @@ def evaluate_segmentation(
         {
             "threshold": threshold,
             "doc_f1": sum(doc_f1) / max(len(doc_f1), 1),
+            "relaxed_f1": sum(doc_relaxed_f1) / max(len(doc_relaxed_f1), 1),
             "pk": sum(doc_pk) / max(len(doc_pk), 1),
             "window_diff": sum(doc_wd) / max(len(doc_wd), 1),
         }

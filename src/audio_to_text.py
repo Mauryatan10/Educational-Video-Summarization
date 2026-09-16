@@ -1,4 +1,5 @@
 import os
+import torch
 from faster_whisper import WhisperModel
 
 def transcribe_audio(audio_name, audio_dir="./audios", text_dir="./texts", model_size="small"):
@@ -13,11 +14,14 @@ def transcribe_audio(audio_name, audio_dir="./audios", text_dir="./texts", model
 
     text_path = os.path.join(text_dir, os.path.splitext(audio_name)[0] + ".txt")
 
-    print(f"Loading Whisper model ({model_size})...")
-    model = model = WhisperModel(
-        "small",
-        device="cuda",
-        compute_type="float16"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+
+    print(f"Loading Whisper model ({model_size}) on {device}...")
+    model = WhisperModel(
+        model_size,
+        device=device,
+        compute_type=compute_type,
     )
     print("Transcribing... This may take a while for longer files.")
     segments, info = model.transcribe(

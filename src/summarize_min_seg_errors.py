@@ -111,6 +111,7 @@ def _print_compact_summary(summary: Dict[str, Any]) -> None:
     print("MiniSeg Error Analysis Summary")
     print(
         f"- Metrics: f1={summary['metrics']['f1']:.4f} "
+        f"relaxed_f1={summary['metrics']['relaxed_f1']:.4f} "
         f"pk={summary['metrics']['pk']:.4f} wd={summary['metrics']['window_diff']:.4f} "
         f"(grade={summary['grade']})"
     )
@@ -161,6 +162,7 @@ def main() -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     metrics = report.get("validation_metrics_at_threshold", {})
     f1 = _safe_float(metrics.get("f1", 0.0))
+    relaxed_f1 = _safe_float(metrics.get("relaxed_f1", 0.0))
     pk = _safe_float(metrics.get("pk", 1.0))
     wd = _safe_float(metrics.get("window_diff", 1.0))
     grade = _metric_grade(f1, pk, wd)
@@ -179,6 +181,7 @@ def main() -> None:
         "timestamp": report.get("timestamp"),
         "metrics": {
             "f1": f1,
+            "relaxed_f1": relaxed_f1,
             "pk": pk,
             "window_diff": wd,
         },

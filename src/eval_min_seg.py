@@ -104,6 +104,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument(
+        "--threshold-objective",
+        type=str,
+        default="f1",
+        choices=["f1", "relaxed_f1", "pk", "window_diff"],
+        help="Metric to optimize when selecting the validation threshold.",
+    )
+    parser.add_argument(
         "--metrics-out",
         type=str,
         default=None,
@@ -129,7 +136,11 @@ def main() -> None:
     )
 
     probs_by_doc, labels_by_doc = collect_predictions(model, val_loader, device, desc="eval-valid")
-    tuned_threshold, tuned_threshold_meta = tune_threshold(probs_by_doc, labels_by_doc, objective="f1")
+    tuned_threshold, tuned_threshold_meta = tune_threshold(
+        probs_by_doc,
+        labels_by_doc,
+        objective=args.threshold_objective,
+    )
 
     metrics_saved_threshold = evaluate_segmentation(probs_by_doc, labels_by_doc, saved_threshold)
     metrics_tuned_threshold = evaluate_segmentation(probs_by_doc, labels_by_doc, tuned_threshold)
@@ -143,12 +154,6 @@ def main() -> None:
         "checkpoint_metrics": checkpoint_metrics,
         "model_config": config.__dict__,
         "num_validation_docs": len(probs_by_doc),
-        "saved_threshold": float(saved_threshold),
-        "tuned_threshold_from_validation": float(tuned_threshold),
-        "tuned_threshold_meta": tuned_threshold_meta,
-        "metrics_saved_threshold": metrics_saved_threshold,
-        "metrics_tuned_threshold": metrics_tuned_threshold,
-        "metrics_threshold_0_5": metrics_default_05,
     }
 
     if args.metrics_out:
@@ -165,19 +170,13 @@ def main() -> None:
     print(
         "Saved threshold metrics | "
         f"f1={metrics_saved_threshold['f1']:.4f} "
+        f"relaxed_f1={metrics_saved_threshold.get('relaxed_f1', 0.0):.4f} "
         f"pk={metrics_saved_threshold['pk']:.4f} "
         f"wd={metrics_saved_threshold['window_diff']:.4f}"
     )
-    print(
-        "Tuned threshold metrics | "
-        f"thr={tuned_threshold:.2f} "
-        f"f1={metrics_tuned_threshold['f1']:.4f} "
-        f"pk={metrics_tuned_threshold['pk']:.4f} "
-        f"wd={metrics_tuned_threshold['window_diff']:.4f}"
-    )
+    
     print(f"Wrote metrics to: {out_path}")
 
 
 if __name__ == "__main__":
     main()
-
