@@ -1,15 +1,69 @@
-texts/**
-videos/**
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+tests/training_qwen3_embed_3stage.log
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Large Datasets & Media
+texts/
+videos/
+audios/
 tib_dataset/
-videos/**
-audios/**
+data/
 qwen/
 llama.cpp/models
-.venv/
-.vscode/
-models
 .kilo
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+
+# Heavy Model Checkpoints & Weights (>50MB - stored locally / HF)
+models/
+checkpoints/
+*.pt
+*.bin
+*.onnx
+*.safetensors
+*.gguf
+
+# Output Directory: ignore all generated lecture runs except one sample output note
+outputs/*
+!outputs/ui_runs/
+outputs/ui_runs/*
+!outputs/ui_runs/16.2.2_Basics_of_Virtual_Memory/

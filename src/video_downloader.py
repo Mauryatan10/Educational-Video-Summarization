@@ -1,9 +1,13 @@
-from pytubefix import YouTube
 import os
 import sys
 import yt_dlp
 from urllib.parse import urlparse, parse_qs
 import re
+
+try:
+    from pytubefix import YouTube
+except ImportError:
+    YouTube = None
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -34,25 +38,56 @@ def _safe_filename(title: str) -> str:
     return (cleaned[:120] or "video") + ".mp4"
 
 
-def _download_ytdlp(url: str, output_dir: str, filename: str | None) -> str:
-    """Primary backend: yt-dlp (no PO token needed). Returns output path."""
-    if filename is None:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            filename = _safe_filename(info.get("title", "video"))
-    base = os.path.splitext(filename)[0]
-
-    outtmpl = os.path.join(output_dir, base + ".%(ext)s")
-    ydl_opts = {
-        "outtmpl": outtmpl,
-        # We only need audio for transcription; cap resolution to keep downloads fast.
-        # Modern YouTube only exposes split video+audio streams, so merge them (ffmpeg).
-        "format": "bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
+def _get_ytdlp_opts(output_dir: str, base: str | None = None, skip_download: bool = False, browser: str | None = None) -> dict:
+    opts: dict = {
         "quiet": True,
         "no_warnings": True,
+        "js_runtimes": {"node": {}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    if browser:
+        opts["cookiesfrombrowser"] = (browser, None, None, None)
+    if skip_download:
+        opts["skip_download"] = True
+    else:
+        outtmpl = os.path.join(output_dir, (base or "%(title)s") + ".%(ext)s")
+        opts.update({
+            "outtmpl": outtmpl,
+            "format": "bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best",
+            "merge_output_format": "mp4",
+        })
+    return opts
+
+
+def _download_ytdlp(url: str, output_dir: str, filename: str | None) -> str:
+    """Primary backend: yt-dlp with node js runtime and automatic browser cookie discovery."""
+    candidate_browsers = ["firefox", "chrome", "chromium", "brave", None]
+    
+    # First find a working configuration (browser cookies if required by YouTube bot-detection)
+    working_browser = None
+    info = None
+    last_err = None
+
+    for browser in candidate_browsers:
+        try:
+            test_opts = _get_ytdlp_opts(output_dir, skip_download=True, browser=browser)
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info and info.get("title"):
+                    working_browser = browser
+                    break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if info is None:
+        raise RuntimeError(f"yt-dlp could not extract video info with any browser profile: {last_err}")
+
+    if filename is None:
+        filename = _safe_filename(info.get("title", "video"))
+    base = os.path.splitext(filename)[0]
+
+    dl_opts = _get_ytdlp_opts(output_dir, base=base, skip_download=False, browser=working_browser)
+    with yt_dlp.YoutubeDL(dl_opts) as ydl:
         ydl.download([url])
 
     candidates = [
@@ -67,6 +102,8 @@ def _download_ytdlp(url: str, output_dir: str, filename: str | None) -> str:
 
 def _download_pytubefix(url: str, output_dir: str, filename: str | None) -> str:
     """Fallback backend: pytubefix. Returns output path."""
+    if YouTube is None:
+        raise RuntimeError("pytubefix is not installed.")
     yt = YouTube(url)
     if filename is None:
         filename = _safe_filename(yt.title)
