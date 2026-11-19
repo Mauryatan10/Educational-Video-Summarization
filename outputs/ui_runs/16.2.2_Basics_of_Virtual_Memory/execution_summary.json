@@ -1,0 +1,19 @@
+{
+  "status": "SUCCESS",
+  "timestamp": "2026-11-17T20:16:11Z",
+  "stage_latencies": {
+    "asr_time_sec": 19.2696,
+    "segmentation_time_sec": 34.0295,
+    "notes_time_sec": 174.7874,
+    "translation_time_sec": 124.087,
+    "total_time_sec": 353.232
+  },
+  "num_sentences": 99,
+  "num_segments": 6,
+  "device": "cuda",
+  "memory_stats": {
+    "peak_rss_mb": 1576.86,
+    "vram_allocated_mb": 0.0,
+    "vram_reserved_mb": 0.0
+  }
+}
