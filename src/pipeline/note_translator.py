@@ -212,23 +212,26 @@ class NoteTranslator:
         self._active_backend: str = "fallback"
         self._translation_cache: Dict[str, str] = {}
 
-    def _is_ollama_model_available(self) -> bool:
-        """Check whether the merged Sarvam-1 GGUF model is registered in local Ollama."""
+    def _is_ollama_model_available(self, retries: int = 3, timeout_sec: float = 5.0) -> bool:
+        """Check whether the merged Sarvam-1 GGUF model is registered in local Ollama with retry resilience."""
         import urllib.request
 
-        try:
-            req = urllib.request.Request(f"{self.config.ollama_url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                if resp.status != 200:
-                    return False
-                payload = json.loads(resp.read().decode("utf-8"))
-                target = self.config.ollama_model
-                for m in payload.get("models", []):
-                    name = str(m.get("name", ""))
-                    if name == target or name == f"{target}:latest" or name.split(":")[0] == target:
-                        return True
-        except Exception as e:
-            logger.debug("Ollama translation model check failed (%s).", e)
+        target = self.config.ollama_model
+        for attempt in range(1, retries + 1):
+            try:
+                req = urllib.request.Request(f"{self.config.ollama_url}/api/tags", method="GET")
+                with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                    if resp.status != 200:
+                        continue
+                    payload = json.loads(resp.read().decode("utf-8"))
+                    for m in payload.get("models", []):
+                        name = str(m.get("name", ""))
+                        if name == target or name == f"{target}:latest" or name.split(":")[0] == target:
+                            return True
+            except Exception as e:
+                logger.debug("Ollama translation model check attempt %d/%d failed: %s", attempt, retries, e)
+                if attempt < retries:
+                    time.sleep(1.0)
         return False
 
     def load_model(self) -> None:

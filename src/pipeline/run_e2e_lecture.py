@@ -623,9 +623,10 @@ class E2ELecturePipeline:
             trans_time = 0.0
             if self.config.translate_hindi:
                 self._notify_stage(stage_callback, "translation", "start", None)
-                # Sequential VRAM Handshake: Evict Ollama before loading Sarvam-1 into VRAM
-                self.memory_manager.evict_ollama()
-                self.memory_manager.cleanup()
+                # Sequential VRAM Handshake: Evict Ollama before loading PyTorch into VRAM (keep Ollama if translating via GGUF)
+                if self.config.translation_backend != "ollama":
+                    self.memory_manager.evict_ollama()
+                    self.memory_manager.cleanup()
 
                 t3 = time.perf_counter()
                 with self.memory_manager.profile_stage("Phase 4: Hindi Study Notes Translation"):
@@ -777,9 +778,10 @@ class E2ELecturePipeline:
             trans_time = 0.0
             if self.config.translate_hindi:
                 self._notify_stage(stage_callback, "translation", "start", None)
-                # Sequential VRAM Handshake: Evict Ollama before loading Sarvam-1 into VRAM
-                self.memory_manager.evict_ollama()
-                self.memory_manager.cleanup()
+                # Sequential VRAM Handshake: Evict Ollama before loading PyTorch into VRAM (keep Ollama if translating via GGUF)
+                if self.config.translation_backend != "ollama":
+                    self.memory_manager.evict_ollama()
+                    self.memory_manager.cleanup()
 
                 t3 = time.perf_counter()
                 with self.memory_manager.profile_stage("Phase 4: Hindi Study Notes Translation"):
